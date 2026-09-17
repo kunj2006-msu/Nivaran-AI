@@ -8,7 +8,9 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Path, status
 
 from src.db.supabase_client import get_supabase_client
+from src.services.email_service import send_order_confirmation_email
 from src.store.models import (
+
     StoreProduct,
     CreateOrderRequest,
     OrderResponse,
@@ -225,7 +227,21 @@ async def create_store_order(payload: CreateOrderRequest):
             if item.product_id in db_products_map:
                 db_products_map[item.product_id]["stock"] -= item.quantity
 
+    # 4. Dispatch Order Confirmation Email
+    try:
+        items_dict_list = [item.dict() for item in order_items_response]
+        send_order_confirmation_email(
+            customer_name=payload.customer.name,
+            customer_email=payload.customer.email,
+            order_id=order_id,
+            total=total_amount,
+            items=items_dict_list
+        )
+    except Exception as email_err:
+        logger.error(f"⚠️ Failed to dispatch order confirmation email: {email_err}")
+
     return OrderResponse(
+
         status="success",
         order_id=order_id,
         customer=payload.customer,

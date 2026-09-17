@@ -13,7 +13,8 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from src.config import TELEGRAM_BOT_TOKEN
-from src.services.chat_service import process_incoming_message, get_or_create_user
+from src.services.chat_service import process_incoming_message, get_or_create_user, get_store_orders_by_email
+from src.services.email_service import decode_email_token
 from src.db.supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ async def safe_reply_markdown(update: Update, text: str) -> None:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handler for Telegram /start command with deep-link order tracking support."""
+    """Handler for Telegram /start command with deep-link token & order tracking support."""
     if not update.message:
         return
 
@@ -67,15 +68,63 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     telegram_id = user.id if user else 0
     display_name = user.full_name if user else "User"
 
-    # Check for deep-linking payload (e.g., /start ORD-12345)
+    # Ensure user record exists in Supabase users table
+    db_user = get_or_create_user(telegram_id, display_name)
+    user_email = db_user.get("email") if db_user else None
+
+    # Check for deep-linking payload (e.g., /start em_a2FrYWt1bmc1N0BnbWFpbC5jb20 or /start ORD-12345)
     if context.args and len(context.args) > 0:
         payload = context.args[0].strip()
-        if payload.startswith("ORD-"):
+
+        # Case A: Encrypted / encoded email token link from order confirmation email
+        decoded_email = decode_email_token(payload)
+        if decoded_email:
+            logger.info(f"🔗 Processing Telegram email token link for '{decoded_email}' by user {display_name} ({telegram_id})")
+            
+            # Save user with email in users table
+            get_or_create_user(telegram_id, display_name, email=decoded_email)
+            user_email = decoded_email
+
+            # Fetch active store orders for this email
+            user_orders = get_store_orders_by_email(decoded_email)
+            if user_orders:
+                order_summaries = []
+                for o in user_orders:
+                    items_str_list = []
+                    for item in o.get("items", []):
+                        p_name = (item.get("store_products") or {}).get("name", "Product")
+                        qty = item.get("quantity", 1)
+                        items_str_list.append(f"{p_name} (x{qty})")
+                    items_summary = ", ".join(items_str_list) if items_str_list else "Purchased Items"
+                    order_summaries.append(
+                        f"📦 **Order #{o['id']}**\n"
+                        f"• **Status:** `{o.get('status', 'processing').title()}`\n"
+                        f"• **Total:** `${float(o.get('total', 0)):.2f}`\n"
+                        f"• **Items:** {items_summary}"
+                    )
+                summary_text = "\n\n".join(order_summaries)
+                verified_reply = (
+                    f"👋 Hello {display_name}! Welcome to ShopNest Customer Support.\n\n"
+                    f"✅ **Email Verified ({decoded_email})**\n"
+                    f"Here are your active order details:\n\n"
+                    f"{summary_text}\n\n"
+                    "Which order or service would you like assistance with today?"
+                )
+            else:
+                verified_reply = (
+                    f"👋 Hello {display_name}! Welcome to ShopNest Support.\n\n"
+                    f"Your email (`<b>{decoded_email}</b>`) has been verified, but no active orders were found under this account.\n\n"
+                    "It looks like you're a new customer! What would you like to know about us? "
+                    "Feel free to ask about our products, store policies, shipping options, or how to place an order!"
+                )
+
+            await safe_reply_markdown(update, verified_reply)
+            return
+
+        # Case B: Legacy order ID payload
+        elif payload.startswith("ORD-"):
             order_id = payload
             logger.info(f"🔗 Processing Telegram deep link for order '{order_id}' by user {display_name} ({telegram_id})")
-
-            # Ensure user record exists in Supabase users table
-            get_or_create_user(telegram_id, display_name)
 
             product_name = "your purchased item"
             try:
@@ -101,12 +150,20 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await safe_reply_markdown(update, link_success_text)
             return
 
-    # Standard fallback welcome message
-    welcome_text = (
-        f"👋 Hello {display_name}! I am Nivaran AI Support Assistant.\n\n"
-        "Ask me any question about our services, store hours, returns, or order tracking!"
-    )
+    if user_email:
+        welcome_text = (
+            f"👋 Hello {display_name}! Welcome back to ShopNest Support.\n\n"
+            f"Your registered email is `<b>{user_email}</b>`.\n\n"
+            "Ask me any question about your active orders, shipping, returns, or store policies!"
+        )
+    else:
+        welcome_text = (
+            f"👋 Hello {display_name}! Welcome to ShopNest Customer Support Assistant.\n\n"
+            "Please reply with your registered **email address** so I can retrieve your order details and assist you!"
+        )
     await safe_reply_markdown(update, welcome_text)
+
+
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

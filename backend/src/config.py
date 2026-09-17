@@ -13,11 +13,20 @@ HOST = os.getenv("HOST", "0.0.0.0")
 # --- API Keys & Credentials ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# --- Telegram & Messaging Config ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "NivaranAiBot")
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "NivaranAiSupportBot")
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_MODE = os.getenv("TELEGRAM_MODE", "polling").lower()  # "polling" or "webhook"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
+
+# --- SMTP Email Configuration ---
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL", "") or SMTP_USER
+
 
 # --- Database & Supabase Config ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")

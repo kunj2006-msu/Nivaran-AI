@@ -122,7 +122,7 @@ def retrieve_context(
 
 
 def get_user_active_orders(telegram_id: int) -> List[Dict[str, Any]]:
-    """Retrieves active orders linked to user's telegram_id joined with product details.
+    """Retrieves active orders linked to user's email (from store_orders) or telegram_id.
 
     Args:
         telegram_id: Telegram user ID.
@@ -135,6 +135,32 @@ def get_user_active_orders(telegram_id: int) -> List[Dict[str, Any]]:
 
     try:
         supabase = get_supabase_client()
+        # 1. Check if user has email set in users table
+        user_res = supabase.table("users").select("email").eq("telegram_id", telegram_id).execute()
+        user_email = user_res.data[0].get("email") if user_res.data else None
+
+        if user_email:
+            # Query store_orders by email
+            so_res = (
+                supabase.table("store_orders")
+                .select("*")
+                .eq("email", user_email.strip().lower())
+                .order("created_at", desc=True)
+                .execute()
+            )
+            store_orders = so_res.data or []
+            if store_orders:
+                for order in store_orders:
+                    items_res = (
+                        supabase.table("store_order_items")
+                        .select("quantity, unit_price, store_products(name)")
+                        .eq("order_id", order["id"])
+                        .execute()
+                    )
+                    order["items"] = items_res.data or []
+                return store_orders
+
+        # Fallback query on legacy orders table
         response = (
             supabase.table("orders")
             .select("id, status, created_at, products(name, price)")
@@ -146,3 +172,4 @@ def get_user_active_orders(telegram_id: int) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"❌ Error fetching active orders for telegram_id={telegram_id}: {e}")
         return []
+

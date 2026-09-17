@@ -16,12 +16,13 @@ from src.services.escalation_service import evaluate_escalation_triggers, create
 logger = logging.getLogger(__name__)
 
 
-def get_or_create_user(telegram_id: int, name: str) -> Dict[str, Any]:
-    """Ensures user exists in the `users` table and updates `last_active_at`.
+def get_or_create_user(telegram_id: int, name: str, email: str = None) -> Dict[str, Any]:
+    """Ensures user exists in the `users` table and updates `last_active_at` and `email` if provided.
 
     Args:
         telegram_id: Telegram user ID.
         name: Display name or handle.
+        email: Optional email address.
 
     Returns:
         User record dictionary.
@@ -34,8 +35,11 @@ def get_or_create_user(telegram_id: int, name: str) -> Dict[str, Any]:
         response = supabase.table("users").select("*").eq("telegram_id", telegram_id).execute()
         if response.data and len(response.data) > 0:
             user = response.data[0]
-            # Update last_active_at timestamp
-            supabase.table("users").update({"last_active_at": now_iso, "name": name}).eq("id", user["id"]).execute()
+            update_fields = {"last_active_at": now_iso, "name": name}
+            if email:
+                update_fields["email"] = email.strip().lower()
+            supabase.table("users").update(update_fields).eq("id", user["id"]).execute()
+            user.update(update_fields)
             return user
 
         # Create new user
@@ -45,13 +49,59 @@ def get_or_create_user(telegram_id: int, name: str) -> Dict[str, Any]:
             "created_at": now_iso,
             "last_active_at": now_iso
         }
+        if email:
+            new_user_data["email"] = email.strip().lower()
         create_res = supabase.table("users").insert(new_user_data).execute()
         if create_res.data and len(create_res.data) > 0:
             return create_res.data[0]
-        return {"id": 0, "telegram_id": telegram_id, "name": name}
+        return {"id": 0, "telegram_id": telegram_id, "name": name, "email": email}
     except Exception as e:
         logger.error(f"Error upserting user telegram_id={telegram_id}: {e}")
-        return {"id": 0, "telegram_id": telegram_id, "name": name}
+        return {"id": 0, "telegram_id": telegram_id, "name": name, "email": email}
+
+
+def update_user_email(telegram_id: int, email: str) -> None:
+    """Updates the user's email in the users table."""
+    if not telegram_id or not email:
+        return
+    try:
+        supabase = get_supabase_client()
+        supabase.table("users").update({
+            "email": email.strip().lower(),
+            "last_active_at": datetime.utcnow().isoformat()
+        }).eq("telegram_id", telegram_id).execute()
+        logger.info(f"📧 Updated user telegram_id={telegram_id} with email='{email}'")
+    except Exception as e:
+        logger.error(f"❌ Failed to update email for telegram_id={telegram_id}: {e}")
+
+
+def get_store_orders_by_email(email: str) -> List[Dict[str, Any]]:
+    """Fetches active store orders and items for a given email address."""
+    if not email:
+        return []
+    try:
+        supabase = get_supabase_client()
+        res = (
+            supabase.table("store_orders")
+            .select("*")
+            .eq("email", email.strip().lower())
+            .order("created_at", desc=True)
+            .execute()
+        )
+        orders = res.data or []
+        for o in orders:
+            items_res = (
+                supabase.table("store_order_items")
+                .select("quantity, unit_price, store_products(name)")
+                .eq("order_id", o["id"])
+                .execute()
+            )
+            o["items"] = items_res.data or []
+        return orders
+    except Exception as e:
+        logger.error(f"❌ Error fetching store_orders for email '{email}': {e}")
+        return []
+
 
 
 def fetch_recent_history(user_id: int, limit: int = CHAT_HISTORY_WINDOW) -> List[Dict[str, Any]]:
@@ -167,6 +217,51 @@ def process_incoming_message(telegram_id: int, user_display_name: str, message_t
 
         # Log incoming user message
         log_chat_message(user_id, "user", message_text)
+
+        # Step 1.5: Check if user provided an email address
+        import re
+        email_match = re.search(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", message_text)
+        if email_match:
+            user_email = email_match.group(0).strip().lower()
+            logger.info(f"📧 Extracted email '{user_email}' from telegram_id={telegram_id}")
+
+            # Save email in users table
+            update_user_email(telegram_id, user_email)
+
+            # Retrieve active orders for this email
+            active_orders = get_store_orders_by_email(user_email)
+
+            if active_orders:
+                order_summaries = []
+                for o in active_orders:
+                    items_str_list = []
+                    for item in o.get("items", []):
+                        p_name = (item.get("store_products") or {}).get("name", "Product")
+                        qty = item.get("quantity", 1)
+                        items_str_list.append(f"{p_name} (x{qty})")
+                    items_summary = ", ".join(items_str_list) if items_str_list else "Purchased Items"
+                    order_summaries.append(
+                        f"📦 **Order #{o['id']}**\n"
+                        f"• **Status:** `{o.get('status', 'processing').title()}`\n"
+                        f"• **Total:** `${float(o.get('total', 0)):.2f}`\n"
+                        f"• **Items:** {items_summary}"
+                    )
+                summary_text = "\n\n".join(order_summaries)
+                reply = (
+                    f"✅ **Email Verified!** Here are your active order details:\n\n"
+                    f"{summary_text}\n\n"
+                    "Which order or service would you like assistance with today?"
+                )
+            else:
+                reply = (
+                    f"👋 Welcome to ShopNest! We couldn't find any existing orders associated with **{user_email}**.\n\n"
+                    "It looks like you're a new customer! What would you like to know about us? "
+                    "Feel free to ask about our products, store policies, shipping options, or how to place an order!"
+                )
+
+            log_chat_message(user_id, "assistant", reply)
+            return reply
+
 
         # Check if the previous assistant turn was a ticket confirmation request or update prompt
         last_assistant_msg = ""

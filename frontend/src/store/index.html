@@ -20,7 +20,7 @@
         <span class="brand-badge">Nivaran AI</span>
       </a>
       <div class="header-actions">
-        <a href="https://t.me/NivaranAiSupportBot" target="_blank" class="btn btn-secondary support-header-btn" title="Customer Care Support Bot" style="text-decoration: none; font-size: 0.85rem; padding: 0.45rem 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem;">
+        <a href="https://t.me/NivaranAiSupportBot?start" target="_blank" class="btn btn-secondary support-header-btn" title="Customer Care Support Bot" style="text-decoration: none; font-size: 0.85rem; padding: 0.45rem 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem;">
           💬 Customer Support
         </a>
         <button class="cart-icon-btn" onclick="openCartDrawer()" title="View Cart" id="header-cart-btn">
@@ -169,15 +169,14 @@
         </div>
       </div>
 
-      <!-- Customer Support Section -->
-      <div style="background: rgba(79, 70, 229, 0.06); padding: 1rem; border-radius: var(--radius-md); margin-bottom: 1.5rem; text-align: center; border: 1px solid rgba(79, 70, 229, 0.2);">
-        <p style="font-size: 0.88rem; color: var(--text-primary); font-weight: 600; margin-bottom: 0.6rem;">
-          Need assistance or order tracking? Reach out to our Customer Support Bot!
+      <!-- Email Confirmation Banner -->
+      <div style="background: rgba(16, 185, 129, 0.08); padding: 0.9rem 1rem; border-radius: var(--radius-md); margin-bottom: 1.5rem; text-align: left; border: 1px solid rgba(16, 185, 129, 0.25); display: flex; align-items: flex-start; gap: 0.6rem;">
+        <span style="font-size: 1.2rem;">📧</span>
+        <p style="font-size: 0.85rem; color: var(--text-primary); margin: 0; line-height: 1.45;">
+          A confirmation email with your order receipt and <strong>Customer Support Bot chat link</strong> has been sent to your email address.
         </p>
-        <a href="https://t.me/NivaranAiSupportBot" target="_blank" class="btn btn-secondary" style="display: inline-flex; align-items: center; gap: 0.4rem; text-decoration: none; font-size: 0.85rem; padding: 0.5rem 1rem;">
-          💬 Contact Customer Support on Telegram
-        </a>
       </div>
+
 
       <button class="btn btn-primary" onclick="closeOverlay('modal-success')">Continue Shopping</button>
     </div>
@@ -195,7 +194,7 @@
       <span>Cart</span>
       <span class="cart-badge" id="nav-cart-badge" style="position: absolute; top: 2px; right: 28%; font-size: 0.65rem; min-width: 16px; height: 16px;">0</span>
     </button>
-    <a href="https://t.me/NivaranAiSupportBot" target="_blank" class="bottom-nav-item">
+    <a href="https://t.me/NivaranAiSupportBot?start" target="_blank" class="bottom-nav-item">
       <span class="bottom-nav-icon">💬</span>
       <span>Support</span>
     </a>
