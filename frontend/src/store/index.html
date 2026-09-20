@@ -20,6 +20,9 @@
         <span class="brand-badge">Nivaran AI</span>
       </a>
       <div class="header-actions">
+        <button class="btn btn-primary voice-header-btn" onclick="openVoiceAssistant()" title="Talk with Nivaran Voice AI" style="text-decoration: none; font-size: 0.85rem; padding: 0.45rem 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); border: none; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);">
+          🎙️ Voice AI
+        </button>
         <a href="https://t.me/NivaranAiSupportBot?start" target="_blank" class="btn btn-secondary support-header-btn" title="Customer Care Support Bot" style="text-decoration: none; font-size: 0.85rem; padding: 0.45rem 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem;">
           💬 Customer Support
         </a>
@@ -181,6 +184,81 @@
       <button class="btn btn-primary" onclick="closeOverlay('modal-success')">Continue Shopping</button>
     </div>
 
+    <!-- 5. Interactive Voice AI Assistant Drawer -->
+    <aside class="drawer-voice" id="drawer-voice" onclick="event.stopPropagation()">
+      <div class="drawer-header voice-drawer-header">
+        <div style="display: flex; align-items: center; gap: 0.6rem;">
+          <span class="voice-header-avatar">🎙️</span>
+          <div>
+            <h3 class="drawer-title" style="color: #ffffff; font-size: 1.05rem; margin: 0; display: flex; align-items: center; gap: 0.4rem;">
+              Nivaran Voice AI
+              <span class="voice-badge-online">Live</span>
+            </h3>
+            <span class="voice-status-pill" id="voice-status-pill">Ready to listen</span>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.5rem;">
+          <button class="voice-speaker-btn" id="voice-speaker-btn" onclick="toggleVoiceAudioOutput()" title="Toggle Spoken Audio Responses">🔊</button>
+          <button class="btn-close" onclick="closeVoiceAssistant()" title="Close Voice Assistant" style="color: #ffffff; opacity: 0.85;">✕</button>
+        </div>
+      </div>
+
+      <div class="voice-chat-feed" id="voice-chat-feed">
+        <div class="voice-msg voice-msg-bot">
+          <div class="voice-msg-bubble">
+            👋 Hi! I am your <strong>Nivaran Voice Assistant</strong>.<br><br>
+            Tap the <strong>microphone</strong> below to speak, or ask me about:
+            <ul style="margin: 0.4rem 0 0 1.2rem; font-size: 0.85rem; line-height: 1.4;">
+              <li>Checking your order status</li>
+              <li>Shipping & delivery times</li>
+              <li>Return & refund policy</li>
+              <li>Product features & prices</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick query suggestion chips -->
+      <div class="voice-chips-container" id="voice-chips-container">
+        <button class="voice-chip" onclick="sendQuickVoicePrompt('Where is my active order?')">📦 Order Status</button>
+        <button class="voice-chip" onclick="sendQuickVoicePrompt('What is your return and refund policy?')">🔄 Return Policy</button>
+        <button class="voice-chip" onclick="sendQuickVoicePrompt('How much does shipping cost?')">🚚 Shipping Info</button>
+      </div>
+
+      <!-- Live Transcript Real-time Display -->
+      <div class="voice-live-transcript-box" id="voice-live-transcript-box" style="display: none;">
+        <span class="voice-transcript-label">Heard:</span>
+        <p class="voice-transcript-text" id="voice-transcript-text">Listening...</p>
+      </div>
+
+      <!-- Interactive Mic & Recording Control Bar -->
+      <div class="voice-control-bar">
+        <div class="voice-mic-wrapper">
+          <button class="voice-mic-btn" id="voice-mic-btn" onclick="toggleVoiceRecording()" title="Click to Speak">
+            <span class="voice-mic-icon" id="voice-mic-icon">🎙️</span>
+            <span class="voice-wave-ring voice-wave-1"></span>
+            <span class="voice-wave-ring voice-wave-2"></span>
+          </button>
+          <span class="voice-mic-label" id="voice-mic-label">Click Mic to Speak</span>
+        </div>
+
+        <!-- Hybrid text input fallback -->
+        <form class="voice-text-form" onsubmit="event.preventDefault(); submitVoiceTextQuery();">
+          <input type="text" id="voice-text-input" class="voice-text-input" placeholder="Or type your question here..." />
+          <button type="submit" class="btn btn-primary" id="btn-voice-send" style="padding: 0.5rem 0.9rem; font-size: 0.9rem; border-radius: var(--radius-md);">Send</button>
+        </form>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Floating Action Button for Instant Voice Access (Desktop & Tablet) -->
+  <div class="voice-fab-container" id="voice-fab-container">
+    <button class="voice-fab-btn" onclick="openVoiceAssistant()" title="Open Voice Support Assistant">
+      <span class="voice-fab-icon">🎙️</span>
+      <span class="voice-fab-text">Voice AI</span>
+      <span class="voice-fab-pulse"></span>
+    </button>
   </div>
 
   <!-- Bottom Navigation Bar for Mobile -->
@@ -194,9 +272,13 @@
       <span>Cart</span>
       <span class="cart-badge" id="nav-cart-badge" style="position: absolute; top: 2px; right: 28%; font-size: 0.65rem; min-width: 16px; height: 16px;">0</span>
     </button>
+    <button class="bottom-nav-item" onclick="openVoiceAssistant()">
+      <span class="bottom-nav-icon">🎙️</span>
+      <span>Voice AI</span>
+    </button>
     <a href="https://t.me/NivaranAiSupportBot?start" target="_blank" class="bottom-nav-item">
       <span class="bottom-nav-icon">💬</span>
-      <span>Support</span>
+      <span>Telegram</span>
     </a>
   </nav>
 

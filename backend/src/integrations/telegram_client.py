@@ -15,6 +15,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from src.config import TELEGRAM_BOT_TOKEN
 from src.services.chat_service import process_incoming_message, get_or_create_user, get_store_orders_by_email
 from src.services.email_service import decode_email_token
+from src.services.voice_service import transcribe_audio
 from src.db.supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,83 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles incoming Telegram voice notes and audio messages.
+    
+    1. Downloads audio (.ogg) from Telegram servers directly in-memory.
+    2. Transcribes voice query using Groq Whisper API (whisper-large-v3).
+    3. Logs transcribed query to Supabase chat_history.
+    4. Runs RAG pipeline and replies to the customer.
+    """
+    if not update.message:
+        return
+
+    voice_obj = update.message.voice or update.message.audio
+    if not voice_obj:
+        return
+
+    user = update.effective_user
+    telegram_id = user.id if user else 0
+    display_name = user.full_name if user else "User"
+
+    logger.info(f"\n🎤 Incoming Telegram Voice Note from {display_name} ({telegram_id}) - Duration: {getattr(voice_obj, 'duration', 0)}s")
+
+    try:
+        # Show recording/uploading status in Telegram chat
+        if update.effective_chat:
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+        # Download Telegram voice audio file in-memory
+        file = await context.bot.get_file(voice_obj.file_id)
+        audio_bytearray = await file.download_as_bytearray()
+        audio_bytes = bytes(audio_bytearray)
+
+        # Transcribe audio using Groq Whisper model
+        transcript = await asyncio.to_thread(
+            transcribe_audio,
+            audio_bytes,
+            "voice.ogg"
+        )
+
+        if not transcript or not transcript.strip():
+            await safe_reply_markdown(
+                update,
+                "🎙️ I received your voice note, but couldn't clearly capture the audio. "
+                "Could you please repeat your query or send it as text?"
+            )
+            return
+
+        logger.info(f"📝 Voice Note Transcribed: '{transcript}'")
+
+        # Process through RAG Pipeline with is_voice=True (ensures DB logs it as voice query)
+        reply_text = await asyncio.to_thread(
+            process_incoming_message,
+            telegram_id,
+            display_name,
+            transcript,
+            True  # is_voice=True
+        )
+
+        if not reply_text or not reply_text.strip():
+            reply_text = (
+                "Hello! I'm here to help you with any questions about ShopNest orders, "
+                "shipping options, return policies, or store hours. How can I assist you?"
+            )
+
+        # Prepend a neat transcript quote indicator for clarity
+        voice_response = f"🎙️ <i>\"{html.escape(transcript)}\"</i>\n\n{reply_text}"
+        await safe_reply_markdown(update, voice_response)
+        logger.info("✅ Telegram voice reply sent successfully.")
+
+    except Exception as e:
+        logger.error(f"❌ Error handling Telegram voice message: {e}", exc_info=True)
+        await safe_reply_markdown(
+            update,
+            "I apologize, but I encountered an issue processing your voice message. "
+            "Please try sending your question again as text or re-recording."
+        )
+
+
 def setup_telegram_application() -> Optional[Application]:
     """Builds and configures the Telegram Bot application."""
     global _telegram_app
@@ -231,8 +309,9 @@ def setup_telegram_application() -> Optional[Application]:
         app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         app.add_handler(CommandHandler("start", start_command))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_message))
         _telegram_app = app
-        logger.info("🚀 Telegram Bot Application configured successfully.")
+        logger.info("🚀 Telegram Bot Application configured successfully with Voice Support.")
         return app
     except Exception as e:
         logger.error(f"❌ Error initializing Telegram application: {e}")

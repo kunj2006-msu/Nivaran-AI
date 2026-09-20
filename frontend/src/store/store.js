@@ -308,6 +308,7 @@ function closeAllOverlays() {
   const backdrop = document.getElementById('overlay-backdrop');
   backdrop.className = 'overlay-backdrop';
   document.querySelectorAll('.modal-box').forEach(m => m.classList.remove('active'));
+  closeVoiceAssistant();
 }
 
 function openCartDrawer() {
@@ -338,44 +339,47 @@ function openCheckoutModal() {
 }
 
 // 7. Form Validation
-function validateCheckoutForm() {
-  let isValid = true;
-
-  const fields = [
-    { id: 'cust-name', check: val => val.trim().length >= 2, msg: 'Please enter your full name.' },
-    { id: 'cust-address', check: val => val.trim().length >= 5, msg: 'Please enter a valid shipping address.' },
-    { id: 'cust-email', check: val => /\S+@\S+\.\S+/.test(val), msg: 'Please enter a valid email address.' }
-  ];
-
-  fields.forEach(f => {
-    const input = document.getElementById(f.id);
-    const feedback = input ? input.nextElementSibling : null;
-    const isFieldValid = f.check(input ? input.value : '');
-
-    if (!isFieldValid) {
-      if (input) input.classList.add('is-invalid');
-      if (feedback && feedback.classList.contains('invalid-feedback')) {
-        feedback.innerText = f.msg;
-      }
-      isValid = false;
-    } else {
-      if (input) input.classList.remove('is-invalid');
-    }
-  });
-
-  return isValid;
+function validateEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-// 8. Submit Order API Call
+// 8. Submit Checkout Order
 async function submitCheckoutOrder() {
-  if (!validateCheckoutForm()) return;
+  const nameEl = document.getElementById('cust-name');
+  const addressEl = document.getElementById('cust-address');
+  const emailEl = document.getElementById('cust-email');
 
-  const name = document.getElementById('cust-name').value.trim();
-  const address = document.getElementById('cust-address').value.trim();
-  const email = document.getElementById('cust-email').value.trim();
+  const name = nameEl.value.trim();
+  const address = addressEl.value.trim();
+  const email = emailEl.value.trim();
+
+  let isValid = true;
+
+  if (!name) {
+    nameEl.classList.add('is-invalid');
+    isValid = false;
+  } else {
+    nameEl.classList.remove('is-invalid');
+  }
+
+  if (!address) {
+    addressEl.classList.add('is-invalid');
+    isValid = false;
+  } else {
+    addressEl.classList.remove('is-invalid');
+  }
+
+  if (!email || !validateEmail(email)) {
+    emailEl.classList.add('is-invalid');
+    isValid = false;
+  } else {
+    emailEl.classList.remove('is-invalid');
+  }
+
+  if (!isValid) return;
 
   const orderPayload = {
-    customer: { name, address, email, phone: '' },
+    customer: { name, email, address, phone: '' },
     items: cartItems.map(item => ({
       product_id: item.product.id,
       quantity: item.quantity
@@ -397,12 +401,23 @@ async function submitCheckoutOrder() {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.detail || 'Order submission failed.');
+      let errorMsg = 'Order submission failed.';
+      if (typeof data.detail === 'string') {
+        errorMsg = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        errorMsg = data.detail.map(d => `${d.loc ? d.loc.slice(1).join('.') : 'field'}: ${d.msg}`).join(', ');
+      }
+      throw new Error(errorMsg);
     }
 
     // Success
     closeOverlay('modal-checkout');
     showOrderSuccessConfirmation(data);
+
+    // Save customer email for Voice Assistant personalization
+    if (orderPayload.customer && orderPayload.customer.email) {
+      localStorage.setItem('shopnest_customer_email', orderPayload.customer.email);
+    }
 
     // Clear cart & refresh inventory stock levels
     cartItems = [];
@@ -425,6 +440,403 @@ function showOrderSuccessConfirmation(orderData) {
   document.getElementById('confirm-total').innerText = `$${parseFloat(orderData.total).toFixed(2)}`;
 
   openOverlay('modal-success');
+}
+
+// ==========================================================================
+// 10. Nivaran AI Interactive Voice Assistant Engine
+// ==========================================================================
+
+let isVoiceAssistantOpen = false;
+let isRecording = false;
+let isAudioOutputEnabled = true;
+let mediaRecorder = null;
+let audioChunks = [];
+let speechRecognition = null;
+let currentPlayingAudio = null;
+let messageCounter = 0;
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function formatBotMarkdown(text) {
+  if (!text) return '';
+  let formatted = escapeHtml(text);
+  // Bold **text** -> <strong>text</strong>
+  formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  // Italic *text* or _text_ -> <em>text</em>
+  formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  // Code `text` -> <code>text</code>
+  formatted = formatted.replace(/`(.*?)`/g, '<code style="background:rgba(0,0,0,0.06);padding:2px 5px;border-radius:4px;font-size:0.85em;">$1</code>');
+  // Bullet lists
+  formatted = formatted.replace(/^\s*•\s*(.*)$/gm, '<li>$1</li>');
+  formatted = formatted.replace(/^\s*-\s*(.*)$/gm, '<li>$1</li>');
+  // Newlines to <br>
+  formatted = formatted.replace(/\n\n/g, '<br><br>');
+  formatted = formatted.replace(/\n/g, '<br>');
+  return formatted;
+}
+
+function setVoiceStatus(statusText, stateClass) {
+  const pill = document.getElementById('voice-status-pill');
+  if (!pill) return;
+  pill.innerText = statusText;
+  if (stateClass === 'listening') {
+    pill.style.color = '#ef4444';
+    pill.innerHTML = '🔴 Listening...';
+  } else if (stateClass === 'thinking') {
+    pill.style.color = '#fbbf24';
+    pill.innerHTML = '⚡ Thinking...';
+  } else if (stateClass === 'speaking') {
+    pill.style.color = '#34d399';
+    pill.innerHTML = '🔊 Speaking...';
+  } else {
+    pill.style.color = 'rgba(255, 255, 255, 0.85)';
+  }
+}
+
+function openVoiceAssistant() {
+  const drawer = document.getElementById('drawer-voice');
+  const backdrop = document.getElementById('overlay-backdrop');
+  if (!drawer || !backdrop) return;
+
+  isVoiceAssistantOpen = true;
+  drawer.classList.add('open');
+  backdrop.classList.add('active');
+  setVoiceStatus('Ready to listen', 'ready');
+  scrollVoiceChatToBottom();
+}
+
+function closeVoiceAssistant() {
+  const drawer = document.getElementById('drawer-voice');
+  const backdrop = document.getElementById('overlay-backdrop');
+
+  if (isRecording) {
+    stopVoiceRecording();
+  }
+  if (currentPlayingAudio) {
+    currentPlayingAudio.pause();
+    currentPlayingAudio = null;
+  }
+
+  isVoiceAssistantOpen = false;
+  if (drawer) drawer.classList.remove('open');
+
+  const hasActiveModal = document.querySelector('.modal-box.active');
+  const isCartActive = backdrop && backdrop.classList.contains('cart-active');
+  if (!hasActiveModal && !isCartActive && backdrop) {
+    backdrop.classList.remove('active', 'modal-active');
+  }
+}
+
+function toggleVoiceAudioOutput() {
+  isAudioOutputEnabled = !isAudioOutputEnabled;
+  const btn = document.getElementById('voice-speaker-btn');
+  if (btn) {
+    btn.innerHTML = isAudioOutputEnabled ? '🔊' : '🔇';
+    btn.classList.toggle('muted', !isAudioOutputEnabled);
+    btn.title = isAudioOutputEnabled ? 'Voice Response Audio: ON' : 'Voice Response Audio: MUTED';
+  }
+  if (!isAudioOutputEnabled && currentPlayingAudio) {
+    currentPlayingAudio.pause();
+  }
+}
+
+function scrollVoiceChatToBottom() {
+  const feed = document.getElementById('voice-chat-feed');
+  if (feed) {
+    setTimeout(() => {
+      feed.scrollTop = feed.scrollHeight;
+    }, 50);
+  }
+}
+
+function appendVoiceMessage(sender, textHtml, audioBase64 = null) {
+  const feed = document.getElementById('voice-chat-feed');
+  if (!feed) return null;
+
+  messageCounter++;
+  const msgId = `voice-msg-${messageCounter}`;
+  const isBot = sender === 'bot';
+
+  const msgDiv = document.createElement('div');
+  msgDiv.className = `voice-msg ${isBot ? 'voice-msg-bot' : 'voice-msg-user'}`;
+  msgDiv.id = msgId;
+
+  const contentFormatted = isBot ? formatBotMarkdown(textHtml) : textHtml;
+
+  let replayBtnHtml = '';
+  if (isBot && audioBase64) {
+    replayBtnHtml = `
+      <button class="voice-audio-replay-btn" onclick="playVoiceAudio('${audioBase64}')" title="Replay voice audio">
+        <span>🔊</span> Listen Again
+      </button>
+    `;
+  }
+
+  const senderTag = isBot ? '🤖 Nivaran AI' : '👤 You';
+
+  msgDiv.innerHTML = `
+    <div class="voice-msg-bubble">
+      ${contentFormatted}
+      ${replayBtnHtml}
+    </div>
+    <span class="voice-msg-tag">${senderTag}</span>
+  `;
+
+  feed.appendChild(msgDiv);
+  scrollVoiceChatToBottom();
+  return msgId;
+}
+
+function updateVoiceMessageContent(msgId, newHtml) {
+  const msgEl = document.getElementById(msgId);
+  if (!msgEl) return;
+  const bubble = msgEl.querySelector('.voice-msg-bubble');
+  if (bubble) {
+    bubble.innerHTML = newHtml;
+  }
+  scrollVoiceChatToBottom();
+}
+
+function playVoiceAudio(audioBase64) {
+  if (!audioBase64) return;
+  if (currentPlayingAudio) {
+    currentPlayingAudio.pause();
+  }
+
+  try {
+    currentPlayingAudio = new Audio(audioBase64);
+    setVoiceStatus('Speaking...', 'speaking');
+    currentPlayingAudio.onended = () => {
+      setVoiceStatus('Ready to listen', 'ready');
+    };
+    currentPlayingAudio.play().catch(e => {
+      console.warn('Audio autoplay prevented or error:', e);
+      setVoiceStatus('Ready to listen', 'ready');
+    });
+  } catch (e) {
+    console.error('Audio playback error:', e);
+  }
+}
+
+// Recording & Audio Capture Logic
+async function toggleVoiceRecording() {
+  if (isRecording) {
+    stopVoiceRecording();
+  } else {
+    await startVoiceRecording();
+  }
+}
+
+async function startVoiceRecording() {
+  if (isRecording) return;
+
+  const micBtn = document.getElementById('voice-mic-btn');
+  const micLabel = document.getElementById('voice-mic-label');
+  const transcriptBox = document.getElementById('voice-live-transcript-box');
+  const transcriptText = document.getElementById('voice-transcript-text');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+
+    let mimeType = 'audio/webm';
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+      mimeType = 'audio/webm;codecs=opus';
+    } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+      mimeType = 'audio/ogg;codecs=opus';
+    } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+      mimeType = 'audio/mp4';
+    }
+
+    mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        audioChunks.push(e.data);
+      }
+    };
+
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(track => track.stop());
+      const audioBlob = new Blob(audioChunks, { type: mimeType });
+      if (audioBlob.size > 1000) {
+        await processVoiceAudioBlob(audioBlob);
+      } else {
+        setVoiceStatus('Ready to listen', 'ready');
+      }
+    };
+
+    mediaRecorder.start(250);
+    isRecording = true;
+
+    if (micBtn) micBtn.classList.add('recording');
+    if (micLabel) micLabel.innerText = 'Listening... Tap to Stop';
+    if (transcriptBox) transcriptBox.style.display = 'block';
+    if (transcriptText) transcriptText.innerText = 'Listening to your voice...';
+    setVoiceStatus('Listening...', 'listening');
+
+    startLiveSpeechRecognition();
+
+  } catch (err) {
+    console.warn('Microphone permission or hardware error:', err);
+    alert('Please enable microphone access in your browser to speak with Nivaran Voice AI, or type your question in the text box below.');
+    setVoiceStatus('Mic error', 'error');
+  }
+}
+
+function stopVoiceRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+
+  const micBtn = document.getElementById('voice-mic-btn');
+  const micLabel = document.getElementById('voice-mic-label');
+
+  if (micBtn) micBtn.classList.remove('recording');
+  if (micLabel) micLabel.innerText = 'Processing query...';
+  setVoiceStatus('Transcribing...', 'thinking');
+
+  if (speechRecognition) {
+    try { speechRecognition.stop(); } catch (e) {}
+  }
+
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+}
+
+function startLiveSpeechRecognition() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) return;
+
+  try {
+    speechRecognition = new SpeechRec();
+    speechRecognition.continuous = true;
+    speechRecognition.interimResults = true;
+    speechRecognition.lang = 'en-US';
+
+    speechRecognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        interim += event.results[i][0].transcript;
+      }
+      const transcriptText = document.getElementById('voice-transcript-text');
+      if (transcriptText && interim) {
+        transcriptText.innerText = interim;
+      }
+    };
+
+    speechRecognition.start();
+  } catch (e) {
+    // Fallback to Groq Whisper directly
+  }
+}
+
+async function processVoiceAudioBlob(audioBlob) {
+  const transcriptBox = document.getElementById('voice-live-transcript-box');
+  const micLabel = document.getElementById('voice-mic-label');
+
+  const tempUserMsgId = appendVoiceMessage('user', '🎤 <i>Processing voice query...</i>');
+  setVoiceStatus('Thinking...', 'thinking');
+
+  try {
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'recording.webm');
+    formData.append('generate_audio', isAudioOutputEnabled ? 'true' : 'false');
+    formData.append('user_name', 'Web Customer');
+
+    const savedEmail = localStorage.getItem('shopnest_customer_email');
+    if (savedEmail) {
+      formData.append('email', savedEmail);
+    }
+
+    const response = await fetch(`${apiBaseUrl}/api/voice/chat`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || 'Voice processing failed.');
+    }
+
+    updateVoiceMessageContent(tempUserMsgId, `🎤 "${escapeHtml(data.query)}"`);
+    appendVoiceMessage('bot', data.response, data.audio_base64);
+
+    if (isAudioOutputEnabled && data.audio_base64) {
+      playVoiceAudio(data.audio_base64);
+    } else {
+      setVoiceStatus('Ready to listen', 'ready');
+    }
+
+  } catch (err) {
+    console.error('Voice chat processing error:', err);
+    updateVoiceMessageContent(tempUserMsgId, `❌ Error: ${err.message}`);
+    setVoiceStatus('Error', 'error');
+  } finally {
+    if (transcriptBox) transcriptBox.style.display = 'none';
+    if (micLabel) micLabel.innerText = 'Click Mic to Speak';
+  }
+}
+
+// Text & Quick Prompt Query Submission
+async function sendQuickVoicePrompt(promptText) {
+  const input = document.getElementById('voice-text-input');
+  if (input) input.value = promptText;
+  await submitVoiceTextQuery();
+}
+
+async function submitVoiceTextQuery() {
+  const input = document.getElementById('voice-text-input');
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  appendVoiceMessage('user', escapeHtml(text));
+  setVoiceStatus('Thinking...', 'thinking');
+
+  try {
+    const formData = new FormData();
+    formData.append('text_query', text);
+    formData.append('generate_audio', isAudioOutputEnabled ? 'true' : 'false');
+    formData.append('user_name', 'Web Customer');
+
+    const savedEmail = localStorage.getItem('shopnest_customer_email');
+    if (savedEmail) {
+      formData.append('email', savedEmail);
+    }
+
+    const response = await fetch(`${apiBaseUrl}/api/voice/chat`, {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || 'Query processing failed.');
+    }
+
+    appendVoiceMessage('bot', data.response, data.audio_base64);
+
+    if (isAudioOutputEnabled && data.audio_base64) {
+      playVoiceAudio(data.audio_base64);
+    } else {
+      setVoiceStatus('Ready to listen', 'ready');
+    }
+
+  } catch (err) {
+    console.error('Voice text query error:', err);
+    appendVoiceMessage('bot', `❌ Error retrieving answer: ${err.message}`);
+    setVoiceStatus('Error', 'error');
+  }
 }
 
 // Initialize on Load

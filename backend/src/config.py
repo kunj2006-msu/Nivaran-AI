@@ -3,8 +3,12 @@
 import os
 from dotenv import load_dotenv, find_dotenv
 
-# Load environment variables from .env file (searches current and parent directories)
-load_dotenv(find_dotenv(usecwd=True))
+# Load environment variables from backend/.env or root .env
+_backend_env = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env"))
+if os.path.exists(_backend_env):
+    load_dotenv(_backend_env)
+else:
+    load_dotenv(find_dotenv(usecwd=True))
 
 # --- Server & General Config ---
 PORT = int(os.getenv("PORT", 8000))

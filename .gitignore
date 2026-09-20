@@ -28,3 +28,7 @@ build/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Scratch test files
+scratch/
+

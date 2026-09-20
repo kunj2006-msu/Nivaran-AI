@@ -5,7 +5,7 @@ import random
 import string
 from datetime import datetime
 from typing import List
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, HTTPException, Path, status, BackgroundTasks
 
 from src.db.supabase_client import get_supabase_client
 from src.services.email_service import send_order_confirmation_email

@@ -24,6 +24,7 @@ from telegram import Update
 from src.config import PORT, HOST, TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME, TELEGRAM_MODE, WEBHOOK_URL
 from src.api.admin_routes import router as admin_router
 from src.store.routes import store_router as store_router
+from src.api.voice_routes import router as voice_router
 from src.integrations.telegram_client import setup_telegram_application
 from src.db.supabase_client import get_supabase_client
 
@@ -92,9 +93,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Admin & Store REST API Routes
+# Mount Admin, Store & Voice REST API Routes
 app.include_router(admin_router)
 app.include_router(store_router)
+app.include_router(voice_router)
 
 # Mount Static Frontends (Admin Panel & E-Commerce Storefront)
 frontend_dir = os.path.abspath(os.path.join(backend_dir, "..", "frontend"))

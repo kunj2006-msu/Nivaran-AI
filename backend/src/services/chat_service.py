@@ -130,19 +130,26 @@ def fetch_recent_history(user_id: int, limit: int = CHAT_HISTORY_WINDOW) -> List
         return []
 
 
-def log_chat_message(user_id: int, role: str, content: str) -> None:
-    """Logs a single message ('user' or 'assistant') to the `chat_history` table."""
+def log_chat_message(user_id: int, role: str, content: str, message_type: str = "text") -> None:
+    """Logs a single message ('user' or 'assistant') to the `chat_history` table with voice support."""
     if user_id <= 0:
         return
 
     try:
         supabase = get_supabase_client()
-        supabase.table("chat_history").insert({
+        payload = {
             "user_id": user_id,
             "role": role,
             "content": content,
             "created_at": datetime.utcnow().isoformat()
-        }).execute()
+        }
+        try:
+            # Try inserting with message_type column
+            payload_with_type = {**payload, "message_type": message_type}
+            supabase.table("chat_history").insert(payload_with_type).execute()
+        except Exception:
+            # Fallback if message_type column is not migrated yet in Supabase
+            supabase.table("chat_history").insert(payload).execute()
     except Exception as e:
         logger.error(f"Error logging chat message role={role} user_id={user_id}: {e}")
 
@@ -201,9 +208,15 @@ def validate_order_ownership(telegram_id: int, order_id: str) -> bool:
         return False
 
 
-def process_incoming_message(telegram_id: int, user_display_name: str, message_text: str) -> str:
-    """End-to-end orchestration pipeline for an incoming user message."""
-    logger.info(f"📩 Processing message from user '{user_display_name}' ({telegram_id}): '{message_text[:50]}...'")
+def process_incoming_message(
+    telegram_id: int,
+    user_display_name: str,
+    message_text: str,
+    is_voice: bool = False
+) -> str:
+    """End-to-end orchestration pipeline for an incoming user message (text or voice)."""
+    voice_tag = " [Voice Query]" if is_voice else ""
+    logger.info(f"📩 Processing message{voice_tag} from user '{user_display_name}' ({telegram_id}): '{message_text[:50]}...'")
 
     try:
         # Step 1: User resolution
@@ -215,8 +228,10 @@ def process_incoming_message(telegram_id: int, user_display_name: str, message_t
         formatted_history = format_history_for_prompt(history_records)
         recent_unresolved = count_unresolved_turns(history_records)
 
-        # Log incoming user message
-        log_chat_message(user_id, "user", message_text)
+        # Log incoming user message (voice or text) into database
+        logged_content = f"🎤 {message_text}" if is_voice else message_text
+        msg_type = "voice" if is_voice else "text"
+        log_chat_message(user_id, "user", logged_content, message_type=msg_type)
 
         # Step 1.5: Check if user provided an email address
         import re
